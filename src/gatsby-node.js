@@ -3,7 +3,6 @@ const path = require(`path`)
 const Dropbox = require(`dropbox`).Dropbox
 const { createRemoteFileNode } = require(`gatsby-source-filesystem`)
 
-
 const defaultOptions = {
   path: ``,
   recursive: true,
@@ -27,7 +26,14 @@ async function getFolderId(dbx, path) {
 }
 
 async function listFiles(dbx, path, recursive) {
-  return dbx.filesListFolder({ path, recursive })
+  let entries = []
+  let res = await dbx.filesListFolder({ path, recursive })
+  entries = entries.concat(res.entries)
+  while (res.has_more) {
+    res = await dbx.filesListFolderContinue({ cursor: res.cursor })
+    entries = entries.concat(res.entries)
+  }
+  return { entries }
 }
 
 async function getTemporaryUrl(dbx, path) {
@@ -40,29 +46,34 @@ async function getTemporaryUrl(dbx, path) {
 
 async function getData(dbx, options) {
   let folderId = ``
-  try {
-    if (options.path !== ``) {
-      const folder = await getFolderId(dbx, options.path)
-      folderId = folder.id
-    }
-    const files = await listFiles(dbx, folderId, options.recursive)
-    return files
-  } catch (e) {
-    console.warn(e.error)
-    return []
+
+  if (options.path !== ``) {
+    const folder = await getFolderId(dbx, options.path)
+    folderId = folder.id
   }
+
+  const files = await listFiles(dbx, folderId, options.recursive)
+  return files
 }
 
 /**
  * Use filesystem to create remote file
  */
 
-async function processRemoteFile(
-  { dbx, datum, cache, store, createNode, touchNode, createNodeId }
-) {
+async function processRemoteFile({
+  dbx,
+  datum,
+  cache,
+  store,
+  createNode,
+  touchNode,
+  createNodeId,
+}) {
   let fileNodeID
-  const isDbxRemoteNode = Object.values(NODE_TYPES).some(entry => entry === datum.internal.type) && datum.internal.type !== NODE_TYPES.FOLDER
-  
+  const isDbxRemoteNode =
+    Object.values(NODE_TYPES).some((entry) => entry === datum.internal.type) &&
+    datum.internal.type !== NODE_TYPES.FOLDER
+
   if (isDbxRemoteNode) {
     const remoteDataCacheKey = `dropbox-file-${datum.id}`
     const cacheRemoteData = await cache.get(remoteDataCacheKey)
@@ -103,21 +114,25 @@ async function processRemoteFile(
  * Helper functions for node creation
  */
 
-function extractFiles(data, options){
-  return data.entries.filter(entry => entry[`.tag`] === `file` && options.extensions.includes(path.extname(entry.name)))
+function extractFiles(data, options) {
+  return data.entries.filter(
+    (entry) =>
+      entry[`.tag`] === `file` &&
+      options.extensions.includes(path.extname(entry.name))
+  )
 }
 
-function extractFolders(data){
- return data.entries.filter(entry => entry[`.tag`] === `folder`)
+function extractFolders(data) {
+  return data.entries.filter((entry) => entry[`.tag`] === `folder`)
 }
 
 function getNodeType(file, options) {
   let nodeType = NODE_TYPES.DEFAULT
 
-  if(options.createFolderNodes) {
+  if (options.createFolderNodes) {
     const extension = path.extname(file.path_display)
 
-    switch(extension) {
+    switch (extension) {
       case `.md`:
         nodeType = NODE_TYPES.MARKDOWN
         break
@@ -146,7 +161,7 @@ function getNodeType(file, options) {
 function createNodeData(data, options) {
   const files = extractFiles(data, options)
 
-  const fileNodes = files.map(file => {
+  const fileNodes = files.map((file) => {
     const nodeDatum = {
       id: file.id,
       parent: `__SOURCE__`,
@@ -166,10 +181,10 @@ function createNodeData(data, options) {
     }
   })
 
-  if(options.createFolderNodes) {
+  if (options.createFolderNodes) {
     const folders = extractFolders(data)
-  
-    const folderNodes = folders.map(folder => {
+
+    const folderNodes = folders.map((folder) => {
       const nodeDatum = {
         id: folder.id,
         parent: `__SOURCE__`,
@@ -179,7 +194,7 @@ function createNodeData(data, options) {
         name: folder.name,
         directory: path.dirname(`root${folder.path_display}`),
       }
-      return{
+      return {
         ...nodeDatum,
         internal: {
           type: NODE_TYPES.FOLDER,
@@ -187,7 +202,7 @@ function createNodeData(data, options) {
         },
       }
     })
-  
+
     // Creating an extra node for the root folder
     const rootDatum = {
       id: `dropboxRoot`,
@@ -207,7 +222,6 @@ function createNodeData(data, options) {
 
     const nodes = [...fileNodes, ...folderNodes]
     return nodes
-
   } else {
     return fileNodes
   }
@@ -215,17 +229,18 @@ function createNodeData(data, options) {
 
 exports.sourceNodes = async (
   { actions: { createNode, touchNode }, store, cache, createNodeId },
-  pluginOptions,
-  ) => {
+  pluginOptions
+) => {
   const options = { ...defaultOptions, ...pluginOptions }
   const dbx = new Dropbox({ fetch, accessToken: options.accessToken })
   const data = await getData(dbx, options)
+  console.log("data", data)
   const nodeData = createNodeData(data, options)
 
   return Promise.all(
-    nodeData.map(async nodeDatum => {
+    nodeData.map(async (nodeDatum) => {
       const node = await processRemoteFile({
-        datum: nodeDatum ,
+        datum: nodeDatum,
         dbx,
         createNode,
         touchNode,
@@ -245,7 +260,7 @@ exports.sourceNodes = async (
 exports.createSchemaCustomization = ({ actions }, pluginOptions) => {
   const options = { ...defaultOptions, ...pluginOptions }
 
-  if(options.createFolderNodes) {
+  if (options.createFolderNodes) {
     const { createTypes } = actions
     const typeDefs = [
       `type dropboxImage implements Node {

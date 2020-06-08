@@ -234,7 +234,6 @@ exports.sourceNodes = async (
   const options = { ...defaultOptions, ...pluginOptions }
   const dbx = new Dropbox({ fetch, accessToken: options.accessToken })
   const data = await getData(dbx, options)
-  console.log("data", data)
   const nodeData = createNodeData(data, options)
 
   return Promise.all(
